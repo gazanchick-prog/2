@@ -4,16 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
-
-# --- КОНФИГУРАЦИЯ ---
-API_ID = 37668790
-API_HASH = '84a0450f9bbf15d1e1d09b47ee25cb49'
-TOKEN = '8415795413:AAFKeIBsH75o7V5YkyrquMxCiCeq7eASii0'
-ADMIN_ID = 8212981789
-
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 user_data_storage = {}
